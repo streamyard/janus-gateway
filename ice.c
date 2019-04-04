@@ -3283,7 +3283,7 @@ static gboolean janus_ice_outgoing_rtcp_handle(gpointer user_data) {
 		janus_rtcp_sdes_cname((char *)sdes, sdeslen, "janusaudio", 10);
 		sdes->chunk.ssrc = htonl(stream->audio_ssrc);
 		/* Enqueue it, we'll send it later */
-		// janus_ice_relay_rtcp_internal(handle, 0, rtcpbuf, srlen+sdeslen, FALSE);
+		janus_ice_relay_rtcp_internal(handle, 0, rtcpbuf, srlen+sdeslen, FALSE);
 	}
 	if(stream && stream->audio_recv) {
 		/* Create a RR too */
@@ -3336,7 +3336,7 @@ static gboolean janus_ice_outgoing_rtcp_handle(gpointer user_data) {
 		janus_rtcp_sdes_cname((char *)sdes, sdeslen, "janusvideo", 10);
 		sdes->chunk.ssrc = htonl(stream->video_ssrc);
 		/* Enqueue it, we'll send it later */
-		// janus_ice_relay_rtcp_internal(handle, 1, rtcpbuf, srlen+sdeslen, FALSE);
+		janus_ice_relay_rtcp_internal(handle, 1, rtcpbuf, srlen+sdeslen, FALSE);
 	}
 	if(stream && stream->video_recv) {
 		/* Create a RR too (for each SSRC, if we're simulcasting) */
