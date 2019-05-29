@@ -95,6 +95,8 @@
 	"secret" : "<password to use to register; optional>",
 	"ha1_secret" : "<prehashed password to use to register; optional>",
 	"authuser" : "<username to use to authenticate (overrides the one in the SIP URI); optional>",
+	"display_name" : "<display name to use when sending SIP REGISTER; optional>",
+	"user_agent" : "<user agent to use when sending SIP REGISTER; optional>",
 	"proxy" : "<server to register at; optional, as won't be needed in case the REGISTER is not goint to be sent (e.g., guests)>",
 	"outbound_proxy" : "<outbound proxy to use, if any; optional>",
 	"headers" : "<array of key/value objects, to specify custom headers to add to the SIP REGISTER; optional>",
@@ -155,14 +157,15 @@
 \verbatim
 {
 	"request" : "call",
-	"username" : "<SIP URI to call; mandatory>",
-	"autoack" : <true|false; if false, will prevent Sofia SIP to send an ACK automatically; helpful as it's the only way to inspect the Record-Route and honor it; optional>",
+	"call_id" : "<user-defined value of Call-ID SIP header used in all SIP requests throughout the call; optional>",
+	"uri" : "<SIP URI to call; mandatory>",
 	"headers" : "<array of key/value objects, to specify custom headers to add to the SIP INVITE; optional>",
 	"srtp" : "<whether to mandate (sdes_mandatory) or offer (sdes_optional) SRTP support; optional>",
 	"srtp_profile" : "<SRTP profile to negotiate, in case SRTP is offered; optional>",
 	"secret" : "<password to use to call, only needed in case authentication is needed and no REGISTER was sent; optional>",
 	"ha1_secret" : "<prehashed password to use to call, only needed in case authentication is needed and no REGISTER was sent; optional>",
-	"authuser" : "<username to use to authenticate as to call, only needed in case authentication is needed and no REGISTER was sent; optional>"
+	"authuser" : "<username to use to authenticate as to call, only needed in case authentication is needed and no REGISTER was sent; optional>",
+	"autoaccept_reinvites" : <true|false, whether we should blindly accept re-INVITEs with a 200 OK instead of relaying the SDP to the browser; optional, TRUE by default>
 }
 \endverbatim
  *
@@ -177,6 +180,7 @@
 \verbatim
 {
 	"sip" : "event",
+	"call_id" : "<value of SIP Call-ID header for related call>",
 	"result" : {
 		"event" : "ringing",
 	}
@@ -191,6 +195,7 @@
 \verbatim
 {
 	"sip" : "event",
+	"call_id" : "<value of SIP Call-ID header for related call>",
 	"result" : {
 		"event" : "accepted",
 		"username" : "<SIP URI of the callee>"
@@ -211,6 +216,7 @@
 \verbatim
 {
 	"sip" : "event",
+	"call_id" : "<value of SIP Call-ID header for related call>",
 	"result" : {
 		"event" : "progress",
 		"username" : "<SIP URI of the callee>"
@@ -247,6 +253,7 @@
 \verbatim
 {
 	"sip" : "event",
+	"call_id" : "<value of SIP Call-ID header for related call>",
 	"result" : {
 		"event" : "incomingcall",
 		"username" : "<SIP URI of the caller>",
@@ -263,7 +270,8 @@
 \verbatim
 {
 	"request" : "accept",
-	"srtp" : "<whether to mandate (sdes_mandatory) or offer (sdes_optional) SRTP support; optional>"
+	"srtp" : "<whether to mandate (sdes_mandatory) or offer (sdes_optional) SRTP support; optional>",
+	"headers" : "<array of key/value objects, to specify custom headers to add to the SIP OK; optional>"
 }
 \endverbatim
  *
@@ -286,19 +294,35 @@
 \verbatim
 {
 	"sip" : "event",
+	"call_id" : "<value of SIP Call-ID header for related call>",
 	"result" : {
 		"event" : "missed_call",
-		"username" : "<SIP URI of the caller>",
+		"caller" : "<SIP URI of the caller>",
 		"displayname" : "<display name of the caller, if available; optional>"
 	}
 }
 \endverbatim
  *
- * Closing a session is always done the same way: this means that, no matter
- * if you're decling a call or hanging up an ongoing session, you always
- * use the same request. This request is called \c hangup and needs no
+ * Besides, you only use \c accept to answer the first INVITE. To accept a
+ * re-INVITE instead, which would be notified via an \c updatingcall event,
+ * you do NOT use \c accept, but the previously introduced \c update instead.
+ * This request needs no arguments, as the whole context is derived from the current
+ * state of the session. It does need the new JSEP answer to provide, though,
+ * as part of the renegotiation. As before, an \c updated event will be
+ * sent back, as this is an asynchronous request.
+ *
+ * Closing a session depends on the call state. If you have an incoming
+ * call that you don't want to accept, use the \c decline request; in all
+ * other cases, use the \c hangup request instead. Both requests need no
  * additional arguments, as the whole context can be extracted from the
  * current state of the session in the plugin:
+ *
+\verbatim
+{
+	"request" : "decline",
+	"code" : <SIP code to be sent, if not set, 486 is used; optional>"
+}
+\endverbatim
  *
 \verbatim
 {
@@ -306,7 +330,8 @@
 }
 \endverbatim
  *
- * An \c hangingup event will be sent back, as this is an asynchronous request.
+ * Since these are asynchronous requests, you'll get an event in response:
+ * \c declining if you used \c decline and \c hangingup if you used \c hangup.
  *
  * As anticipated before, when a call is declined or being hung up, a
  * \c hangup event is sent instead, which is basically a SIP error event
@@ -493,6 +518,8 @@ static struct janus_json_parameter register_parameters[] = {
 	{"secret", JSON_STRING, 0},
 	{"ha1_secret", JSON_STRING, 0},
 	{"authuser", JSON_STRING, 0},
+	{"display_name", JSON_STRING, 0},
+	{"user_agent", JSON_STRING, 0},
 	{"headers", JSON_OBJECT, 0},
 	{"refresh", JANUS_JSON_BOOL, 0}
 };
@@ -502,10 +529,10 @@ static struct janus_json_parameter proxy_parameters[] = {
 };
 static struct janus_json_parameter call_parameters[] = {
 	{"uri", JSON_STRING, JANUS_JSON_PARAM_REQUIRED},
-	{"autoack", JANUS_JSON_BOOL, 0},
 	{"headers", JSON_OBJECT, 0},
 	{"srtp", JSON_STRING, 0},
 	{"srtp_profile", JSON_STRING, 0},
+	{"autoaccept_reinvites", JANUS_JSON_BOOL, 0},
 	/* The following are only needed in case "guest" registrations
 	 * still need an authenticated INVITE for some reason */
 	{"secret", JSON_STRING, 0},
@@ -513,7 +540,9 @@ static struct janus_json_parameter call_parameters[] = {
 	{"authuser", JSON_STRING, 0}
 };
 static struct janus_json_parameter accept_parameters[] = {
-	{"srtp", JSON_STRING, 0}
+	{"srtp", JSON_STRING, 0},
+	{"headers", JSON_OBJECT, 0},
+	{"autoaccept_reinvites", JANUS_JSON_BOOL, 0}
 };
 static struct janus_json_parameter recording_parameters[] = {
 	{"action", JSON_STRING, JANUS_JSON_PARAM_REQUIRED},
@@ -540,7 +569,7 @@ static volatile gint initialized = 0, stopping = 0;
 static gboolean notify_events = TRUE;
 static janus_callbacks *gateway = NULL;
 
-static char *local_ip = NULL;
+static char *local_ip = NULL, *sdp_ip = NULL;
 static int keepalive_interval = 120;
 static gboolean behind_nat = FALSE;
 static char *user_agent;
@@ -649,8 +678,8 @@ typedef struct janus_sip_media {
 	char *remote_ip;
 	gboolean earlymedia;
 	gboolean update;
+	gboolean autoaccept_reinvites;
 	gboolean ready;
-	gboolean autoack;
 	gboolean require_srtp, has_srtp_local, has_srtp_remote;
 	janus_srtp_profile srtp_profile;
 	gboolean on_hold;
@@ -697,6 +726,8 @@ typedef struct janus_sip_session {
 	janus_recorder *vrc;		/* The Janus recorder instance for this user's video, if enabled */
 	janus_recorder *vrc_peer;	/* The Janus recorder instance for the peer's video, if enabled */
 	janus_mutex rec_mutex;		/* Mutex to protect the recorders from race conditions */
+	GThread *relayer_thread;
+	volatile gint establishing, established;
 	volatile gint hangingup;
 	volatile gint destroyed;
 	janus_refcount ref;
@@ -995,7 +1026,6 @@ static int janus_sip_srtp_set_remote(janus_sip_session *session, gboolean video,
 static void janus_sip_srtp_cleanup(janus_sip_session *session) {
 	if(session == NULL)
 		return;
-	session->media.autoack = TRUE;
 	session->media.require_srtp = FALSE;
 	session->media.has_srtp_local = FALSE;
 	session->media.has_srtp_remote = FALSE;
@@ -1093,6 +1123,32 @@ static void janus_sip_random_string(int length, char *buffer) {
 	}
 }
 
+static void janus_sip_parse_custom_headers(json_t *root, char *custom_headers) {
+	custom_headers[0] = '\0';
+	json_t *headers = json_object_get(root, "headers");
+	if(headers) {
+		if(json_object_size(headers) > 0) {
+			/* Parse custom headers */
+			const char *key = NULL;
+			json_t *value = NULL;
+			void *iter = json_object_iter(headers);
+			while(iter != NULL) {
+				key = json_object_iter_key(iter);
+				value = json_object_get(headers, key);
+				if(value == NULL || !json_is_string(value)) {
+					JANUS_LOG(LOG_WARN, "Skipping header '%s': value is not a string\n", key);
+					iter = json_object_iter_next(headers, iter);
+					continue;
+				}
+				char h[255];
+				g_snprintf(h, 255, "%s: %s\r\n", key, json_string_value(value));
+				JANUS_LOG(LOG_VERB, "Adding custom header, %s", h);
+				g_strlcat(custom_headers, h, 2048);
+				iter = json_object_iter_next(headers, iter);
+			}
+		}
+	}
+}
 
 /* Sofia SIP logger function: when the Event Handlers mechanism is enabled,
  * we use this to intercept SIP messages sent by the stack (received
@@ -1104,7 +1160,9 @@ static void janus_sip_sofia_logger(void *stream, char const *fmt, va_list ap) {
 	if(!fmt)
 		return;
 	char line[255];
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
 	g_vsnprintf(line, sizeof(line), fmt, ap);
+#pragma GCC diagnostic warning "-Wformat-nonliteral"
 	if(skip) {
 		/* This is a message we're not interested in: just check when it ends */
 		if(line[3] == '-') {
@@ -1214,13 +1272,20 @@ int janus_sip_init(janus_callbacks *callback, const char *config_path) {
 
 	/* Read configuration */
 	char filename[255];
-	g_snprintf(filename, 255, "%s/%s.cfg", config_path, JANUS_SIP_PACKAGE);
+	g_snprintf(filename, 255, "%s/%s.jcfg", config_path, JANUS_SIP_PACKAGE);
 	JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
 	janus_config *config = janus_config_parse(filename);
+	if(config == NULL) {
+		JANUS_LOG(LOG_WARN, "Couldn't find .jcfg configuration file (%s), trying .cfg\n", JANUS_SIP_PACKAGE);
+		g_snprintf(filename, 255, "%s/%s.cfg", config_path, JANUS_SIP_PACKAGE);
+		JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
+		config = janus_config_parse(filename);
+	}
 	if(config != NULL) {
 		janus_config_print(config);
 
-		janus_config_item *item = janus_config_get_item_drilldown(config, "general", "local_ip");
+		janus_config_category *config_general = janus_config_get_create(config, NULL, janus_config_type_category, "general");
+		janus_config_item *item = janus_config_get(config, config_general, janus_config_type_item, "local_ip");
 		if(item && item->value) {
 			/* Verify that the address is valid */
 			struct ifaddrs *ifas = NULL;
@@ -1242,28 +1307,34 @@ int janus_sip_init(janus_callbacks *callback, const char *config_path) {
 			}
 		}
 
-		item = janus_config_get_item_drilldown(config, "general", "keepalive_interval");
+		item = janus_config_get(config, config_general, janus_config_type_item, "sdp_ip");
+		if(item && item->value) {
+			sdp_ip = g_strdup(item->value);
+			JANUS_LOG(LOG_VERB, "IP to advertise in SDP: %s\n", sdp_ip);
+		}
+
+		item = janus_config_get(config, config_general, janus_config_type_item, "keepalive_interval");
 		if(item && item->value)
 			keepalive_interval = atoi(item->value);
 		JANUS_LOG(LOG_VERB, "SIP keep-alive interval set to %d seconds\n", keepalive_interval);
 
-		item = janus_config_get_item_drilldown(config, "general", "register_ttl");
+		item = janus_config_get(config, config_general, janus_config_type_item, "register_ttl");
 		if(item && item->value)
 			register_ttl = atoi(item->value);
 		JANUS_LOG(LOG_VERB, "SIP registration TTL set to %d seconds\n", register_ttl);
 
-		item = janus_config_get_item_drilldown(config, "general", "behind_nat");
+		item = janus_config_get(config, config_general, janus_config_type_item, "behind_nat");
 		if(item && item->value)
 			behind_nat = janus_is_true(item->value);
 
-		item = janus_config_get_item_drilldown(config, "general", "user_agent");
+		item = janus_config_get(config, config_general, janus_config_type_item, "user_agent");
 		if(item && item->value)
 			user_agent = g_strdup(item->value);
 		else
 			user_agent = g_strdup("Janus WebRTC Server SIP Plugin "JANUS_SIP_VERSION_STRING);
 		JANUS_LOG(LOG_VERB, "SIP User-Agent set to %s\n", user_agent);
 
-		item = janus_config_get_item_drilldown(config, "general", "rtp_port_range");
+		item = janus_config_get(config, config_general, janus_config_type_item, "rtp_port_range");
 		if(item && item->value) {
 			/* Split in min and max port */
 			char *maxport = strrchr(item->value, '-');
@@ -1285,7 +1356,7 @@ int janus_sip_init(janus_callbacks *callback, const char *config_path) {
 			JANUS_LOG(LOG_VERB, "SIP RTP/RTCP port range: %u -- %u\n", rtp_range_min, rtp_range_max);
 		}
 
-		item = janus_config_get_item_drilldown(config, "general", "events");
+		item = janus_config_get(config, config_general, janus_config_type_item, "events");
 		if(item != NULL && item->value != NULL)
 			notify_events = janus_is_true(item->value);
 		if(!notify_events && callback->events_is_enabled()) {
@@ -1367,6 +1438,7 @@ void janus_sip_destroy(void) {
 	su_deinit();
 
 	g_free(local_ip);
+	g_free(sdp_ip);
 
 	JANUS_LOG(LOG_INFO, "%s destroyed!\n", JANUS_SIP_NAME);
 }
@@ -1438,8 +1510,8 @@ void janus_sip_create_session(janus_plugin_session *handle, int *error) {
 	session->media.remote_ip = NULL;
 	session->media.earlymedia = FALSE;
 	session->media.update = FALSE;
+	session->media.autoaccept_reinvites = TRUE;
 	session->media.ready = FALSE;
-	session->media.autoack = TRUE;
 	session->media.require_srtp = FALSE;
 	session->media.has_srtp_local = FALSE;
 	session->media.has_srtp_remote = FALSE;
@@ -1478,6 +1550,8 @@ void janus_sip_create_session(janus_plugin_session *handle, int *error) {
 	session->media.pipefd[1] = -1;
 	session->media.updated = FALSE;
 	janus_mutex_init(&session->rec_mutex);
+	g_atomic_int_set(&session->establishing, 0);
+	g_atomic_int_set(&session->established, 0);
 	g_atomic_int_set(&session->hangingup, 0);
 	g_atomic_int_set(&session->destroyed, 0);
 	su_home_init(session->stack->s_home);
@@ -1540,7 +1614,6 @@ json_t *janus_sip_query_session(janus_plugin_session *handle) {
 	json_object_set_new(info, "call_status", json_string(janus_sip_call_status_string(session->status)));
 	if(session->callee) {
 		json_object_set_new(info, "callee", json_string(session->callee));
-		json_object_set_new(info, "auto-ack", json_string(session->media.autoack ? "yes" : "no"));
 		json_object_set_new(info, "srtp-required", json_string(session->media.require_srtp ? "yes" : "no"));
 		json_object_set_new(info, "sdes-local", json_string(session->media.has_srtp_local ? "yes" : "no"));
 		json_object_set_new(info, "sdes-remote", json_string(session->media.has_srtp_remote ? "yes" : "no"));
@@ -1557,6 +1630,8 @@ json_t *janus_sip_query_session(janus_plugin_session *handle) {
 			json_object_set_new(recording, "video-peer", json_string(session->vrc_peer->filename));
 		json_object_set_new(info, "recording", recording);
 	}
+	json_object_set_new(info, "establishing", json_integer(g_atomic_int_get(&session->establishing)));
+	json_object_set_new(info, "established", json_integer(g_atomic_int_get(&session->established)));
 	json_object_set_new(info, "hangingup", json_integer(g_atomic_int_get(&session->hangingup)));
 	json_object_set_new(info, "destroyed", json_integer(g_atomic_int_get(&session->destroyed)));
 	janus_refcount_decrease(&session->ref);
@@ -1603,6 +1678,8 @@ void janus_sip_setup_media(janus_plugin_session *handle) {
 		janus_mutex_unlock(&sessions_mutex);
 		return;
 	}
+	g_atomic_int_set(&session->established, 1);
+	g_atomic_int_set(&session->establishing, 0);
 	g_atomic_int_set(&session->hangingup, 0);
 	janus_mutex_unlock(&sessions_mutex);
 	/* TODO Only relay RTP/RTCP when we get this event */
@@ -1854,28 +1931,47 @@ static void janus_sip_hangup_media_internal(janus_plugin_session *handle) {
 	if(!g_atomic_int_compare_and_exchange(&session->hangingup, 0, 1))
 		return;
 	session->media.simulcast_ssrc = 0;
-	if(!(session->status == janus_sip_call_status_inviting ||
-		 session->status == janus_sip_call_status_invited ||
-		 session->status == janus_sip_call_status_incall)) {
-		g_atomic_int_set(&session->hangingup, 0);
-		return;
-	}
 	/* Do cleanup if media thread has not been created */
-	if(!session->media.ready) {
+	if(!session->media.ready && !session->relayer_thread) {
 		janus_sip_media_cleanup(session);
 	}
 	/* Get rid of the recorders, if available */
 	janus_mutex_lock(&session->rec_mutex);
 	janus_sip_recorder_close(session, TRUE, TRUE, TRUE, TRUE);
 	janus_mutex_unlock(&session->rec_mutex);
-	/* FIXME Simulate a "hangup" coming from the browser */
-	janus_refcount_increase(&session->ref);
-	janus_sip_message *msg = g_malloc(sizeof(janus_sip_message));
-	msg->handle = handle;
-	msg->message = json_pack("{ss}", "request", "hangup");
-	msg->transaction = NULL;
-	msg->jsep = NULL;
-	g_async_queue_push(messages, msg);
+	if(!(session->status == janus_sip_call_status_inviting ||
+		 session->status == janus_sip_call_status_invited ||
+		 session->status == janus_sip_call_status_incall)) {
+		g_atomic_int_set(&session->establishing, 0);
+		g_atomic_int_set(&session->established, 0);
+		g_atomic_int_set(&session->hangingup, 0);
+		return;
+	}
+	/* Involve SIP if needed */
+	if(session->stack->s_nh_i != NULL && session->callee != NULL) {
+		/* Send a BYE */
+		session->media.earlymedia = FALSE;
+		session->media.update = FALSE;
+		session->media.autoaccept_reinvites = TRUE;
+		session->media.ready = FALSE;
+		session->media.on_hold = FALSE;
+		session->status = janus_sip_call_status_closing;
+		nua_bye(session->stack->s_nh_i, TAG_END());
+		g_free(session->callee);
+		session->callee = NULL;
+		/* Notify the operation */
+		json_t *event = json_object();
+		json_object_set_new(event, "sip", json_string("event"));
+		json_t *result = json_object();
+		json_object_set_new(result, "event", json_string("hangingup"));
+		json_object_set_new(event, "result", result);
+		json_object_set_new(event, "call_id", json_string(session->callid));
+		int ret = gateway->push_event(session->handle, &janus_sip_plugin, NULL, event, NULL);
+		JANUS_LOG(LOG_VERB, "  >> Pushing event: %d (%s)\n", ret, janus_get_api_error(ret));
+		json_decref(event);
+	}
+	g_atomic_int_set(&session->establishing, 0);
+	g_atomic_int_set(&session->established, 0);
 	g_atomic_int_set(&session->hangingup, 0);
 }
 
@@ -2203,6 +2299,12 @@ static void *janus_sip_handler(void *data) {
 					goto error;
 				}
 			}
+			if(session == NULL || session->stack == NULL) {
+				JANUS_LOG(LOG_ERR, "Missing session or Sofia stack\n");
+				error_code = JANUS_SIP_ERROR_UNKNOWN_ERROR;
+				g_snprintf(error_cause, 512, "Missing session or Sofia stack");
+				goto error;
+			}
 			if(session->stack->s_nh_r != NULL) {
 				nua_handle_destroy(session->stack->s_nh_r);
 				session->stack->s_nh_r = NULL;
@@ -2211,30 +2313,7 @@ static void *janus_sip_handler(void *data) {
 			if(send_register) {
 				/* Check if the REGISTER needs to be enriched with custom headers */
 				char custom_headers[2048];
-				custom_headers[0] = '\0';
-				json_t *headers = json_object_get(root, "headers");
-				if(headers) {
-					if(json_object_size(headers) > 0) {
-						/* Parse custom headers */
-						const char *key = NULL;
-						json_t *value = NULL;
-						void *iter = json_object_iter(headers);
-						while(iter != NULL) {
-							key = json_object_iter_key(iter);
-							value = json_object_get(headers, key);
-							if(value == NULL || !json_is_string(value)) {
-								JANUS_LOG(LOG_WARN, "Skipping header '%s': value is not a string\n", key);
-								iter = json_object_iter_next(headers, iter);
-								continue;
-							}
-							char h[255];
-							g_snprintf(h, 255, "%s: %s\r\n", key, json_string_value(value));
-							JANUS_LOG(LOG_VERB, "Adding custom header, %s", h);
-							g_strlcat(custom_headers, h, 2048);
-							iter = json_object_iter_next(headers, iter);
-						}
-					}
-				}
+				janus_sip_parse_custom_headers(root, (char *)&custom_headers);
 				session->stack->s_nh_r = nua_handle(session->stack->s_nua, session, TAG_END());
 				if(session->stack->s_nh_r == NULL) {
 					JANUS_LOG(LOG_ERR, "NUA Handle for REGISTER still null??\n");
@@ -2333,35 +2412,9 @@ static void *janus_sip_handler(void *data) {
 				goto error;
 			}
 			json_t *uri = json_object_get(root, "uri");
-			/* Check if we need to ACK manually (e.g., for the Record-Route hack) */
-			json_t *autoack = json_object_get(root, "autoack");
-			gboolean do_autoack = autoack ? json_is_true(autoack) : TRUE;
 			/* Check if the INVITE needs to be enriched with custom headers */
 			char custom_headers[2048];
-			custom_headers[0] = '\0';
-			json_t *headers = json_object_get(root, "headers");
-			if(headers) {
-				if(json_object_size(headers) > 0) {
-					/* Parse custom headers */
-					const char *key = NULL;
-					json_t *value = NULL;
-					void *iter = json_object_iter(headers);
-					while(iter != NULL) {
-						key = json_object_iter_key(iter);
-						value = json_object_get(headers, key);
-						if(value == NULL || !json_is_string(value)) {
-							JANUS_LOG(LOG_WARN, "Skipping header '%s': value is not a string\n", key);
-							iter = json_object_iter_next(headers, iter);
-							continue;
-						}
-						char h[255];
-						g_snprintf(h, 255, "%s: %s\r\n", key, json_string_value(value));
-						JANUS_LOG(LOG_VERB, "Adding custom header, %s", h);
-						g_strlcat(custom_headers, h, 2048);
-						iter = json_object_iter_next(headers, iter);
-					}
-				}
-			}
+			janus_sip_parse_custom_headers(root, (char *)&custom_headers);
 			/* SDES-SRTP is disabled by default, let's see if we need to enable it */
 			gboolean offer_srtp = FALSE, require_srtp = FALSE;
 			janus_srtp_profile srtp_profile = JANUS_SRTP_AES128_CM_SHA1_80;
@@ -2405,6 +2458,8 @@ static void *janus_sip_handler(void *data) {
 					}
 				}
 			}
+			json_t *aar = json_object_get(root, "autoaccept_reinvites");
+			session->media.autoaccept_reinvites = aar ? json_is_true(aar) : TRUE;
 			/* Parse address */
 			const char *uri_text = json_string_value(uri);
 			janus_sip_uri_t target_uri;
@@ -2498,9 +2553,16 @@ static void *janus_sip_handler(void *data) {
 			}
 			g_atomic_int_set(&session->hangingup, 0);
 			session->status = janus_sip_call_status_inviting;
-			/* Create a random call-id */
-			char callid[24];
-			janus_sip_random_string(24, (char *)&callid);
+			char *callid;
+			json_t *request_callid = json_object_get(root, "call_id");
+			/* Take call-id from request, if it exists */
+			if (request_callid) {
+				callid = g_strdup(json_string_value(request_callid));
+			} else {
+				/* If call-id does not exist in request, create a random one */
+				callid = g_malloc0(24);
+				janus_sip_random_string(24, callid);
+			}
 			/* Also notify event handlers */
 			if(notify_events && gateway->events_is_enabled()) {
 				json_t *info = json_object();
@@ -2514,7 +2576,9 @@ static void *janus_sip_handler(void *data) {
 			json_t *msg_simulcast = json_object_get(msg->jsep, "simulcast");
 			if(msg_simulcast) {
 				JANUS_LOG(LOG_WARN, "Client negotiated simulcasting which we don't do here, falling back to base substream...\n");
-				session->media.simulcast_ssrc = json_integer_value(json_object_get(msg_simulcast, "ssrc-0"));
+				json_t *s = json_object_get(msg_simulcast, "ssrcs");
+				if(s && json_array_size(s) > 0)
+					session->media.simulcast_ssrc = json_integer_value(json_array_get(s, 0));
 			}
 			/* Check if there are new credentials to authenticate the INVITE */
 			if(authuser) {
@@ -2537,11 +2601,11 @@ static void *janus_sip_handler(void *data) {
 			g_free(session->callee);
 			session->callee = g_strdup(uri_text);
 			g_free(session->callid);
-			session->callid = g_strdup(callid);
+			session->callid = callid;
 			janus_mutex_lock(&sessions_mutex);
 			g_hash_table_insert(callids, session->callid, session);
 			janus_mutex_unlock(&sessions_mutex);
-			session->media.autoack = do_autoack;
+			g_atomic_int_set(&session->establishing, 1);
 			nua_invite(session->stack->s_nh_i,
 				SIPTAG_FROM_STR(from_hdr),
 				SIPTAG_TO_STR(uri_text),
@@ -2550,7 +2614,7 @@ static void *janus_sip_handler(void *data) {
 				NUTAG_PROXY(session->account.outbound_proxy),
 				TAG_IF(strlen(custom_headers) > 0, SIPTAG_HEADER_STR(custom_headers)),
 				NUTAG_AUTOANSWER(0),
-				NUTAG_AUTOACK(do_autoack),
+				NUTAG_AUTOACK(FALSE),
 				TAG_END());
 			g_free(sdp);
 			session->callee = g_strdup(uri_text);
@@ -2671,7 +2735,9 @@ static void *janus_sip_handler(void *data) {
 			json_t *msg_simulcast = json_object_get(msg->jsep, "simulcast");
 			if(msg_simulcast) {
 				JANUS_LOG(LOG_WARN, "Client negotiated simulcasting which we don't do here, falling back to base substream...\n");
-				session->media.simulcast_ssrc = json_integer_value(json_object_get(msg_simulcast, "ssrc-0"));
+				json_t *s = json_object_get(msg_simulcast, "ssrcs");
+				if(s && json_array_size(s) > 0)
+					session->media.simulcast_ssrc = json_integer_value(json_array_get(s, 0));
 			}
 			/* Also notify event handlers */
 			if(notify_events && gateway->events_is_enabled()) {
@@ -2681,6 +2747,9 @@ static void *janus_sip_handler(void *data) {
 					json_object_set_new(info, "call-id", json_string(session->callid));
 				gateway->notify_event(&janus_sip_plugin, session->handle, info);
 			}
+			/* Check if the OK needs to be enriched with custom headers */
+			char custom_headers[2048];
+			janus_sip_parse_custom_headers(root, (char *)&custom_headers);
 			/* Send 200 OK */
 			if(!answer) {
 				if(session->transaction)
@@ -2697,6 +2766,7 @@ static void *janus_sip_handler(void *data) {
 				SOATAG_USER_SDP_STR(sdp),
 				SOATAG_RTP_SELECT(SOA_RTP_SELECT_COMMON),
 				NUTAG_AUTOANSWER(0),
+				TAG_IF(strlen(custom_headers) > 0, SIPTAG_HEADER_STR(custom_headers)),
 				TAG_END());
 			g_free(sdp);
 			/* Send an ack back */
@@ -2709,8 +2779,10 @@ static void *janus_sip_handler(void *data) {
 				char tname[16];
 				g_snprintf(tname, sizeof(tname), "siprtp %s", session->account.username);
 				janus_refcount_increase(&session->ref);
-				g_thread_try_new(tname, janus_sip_relay_thread, session, &error);
+				session->relayer_thread = g_thread_try_new(tname, janus_sip_relay_thread, session, &error);
 				if(error != NULL) {
+					session->relayer_thread = NULL;
+					session->media.ready = FALSE;
 					janus_refcount_decrease(&session->ref);
 					JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP/RTCP thread...\n", error->code, error->message ? error->message : "??");
 				}
@@ -2748,6 +2820,8 @@ static void *janus_sip_handler(void *data) {
 				g_snprintf(error_cause, 512, "Missing SDP update");
 				goto error;
 			}
+			const char *msg_sdp_type = json_string_value(json_object_get(msg->jsep, "type"));
+			gboolean offer = !strcasecmp(msg_sdp_type, "offer");
 			/* Parse the SDP we got, manipulate some things, and generate a new one */
 			char sdperror[100];
 			janus_sdp *parsed_sdp = janus_sdp_parse(msg_sdp, sdperror, sizeof(sdperror));
@@ -2757,8 +2831,9 @@ static void *janus_sip_handler(void *data) {
 				g_snprintf(error_cause, 512, "Error parsing SDP: %s", sdperror);
 				goto error;
 			}
-			session->sdp->o_version++;
-			char *sdp = janus_sip_sdp_manipulate(session, parsed_sdp, FALSE);
+			if(offer)
+				session->sdp->o_version++;
+			char *sdp = janus_sip_sdp_manipulate(session, parsed_sdp, !offer);
 			if(sdp == NULL) {
 				JANUS_LOG(LOG_ERR, "Error manipulating SDP\n");
 				janus_sdp_destroy(parsed_sdp);
@@ -2769,15 +2844,26 @@ static void *janus_sip_handler(void *data) {
 			/* Take note of the new SDP */
 			janus_sdp_destroy(session->sdp);
 			session->sdp = parsed_sdp;
-			session->media.update = TRUE;
+			session->media.update = offer;
 			JANUS_LOG(LOG_VERB, "Prepared SDP for update:\n%s", sdp);
-			nua_invite(session->stack->s_nh_i,
-				SOATAG_USER_SDP_STR(sdp),
-				TAG_END());
+			if(offer) {
+				/* We're sending a re-INVITE ourselves */
+				nua_invite(session->stack->s_nh_i,
+					SOATAG_USER_SDP_STR(sdp),
+					TAG_END());
+			} else {
+				/* We're answering to a re-INVITE we received */
+				nua_respond(session->stack->s_nh_i,
+					200, sip_status_phrase(200),
+					SOATAG_USER_SDP_STR(sdp),
+					SOATAG_RTP_SELECT(SOA_RTP_SELECT_COMMON),
+					NUTAG_AUTOANSWER(0),
+					TAG_END());
+			}
 			g_free(sdp);
 			/* Send an ack back */
 			result = json_object();
-			json_object_set_new(result, "event", json_string("updating"));
+			json_object_set_new(result, "event", json_string(offer ? "updating" : "updated"));
 		} else if(!strcasecmp(request_text, "decline")) {
 			/* Reject an incoming call */
 			if(session->status != janus_sip_call_status_invited) {
@@ -2796,6 +2882,7 @@ static void *janus_sip_handler(void *data) {
 			}
 			session->media.earlymedia = FALSE;
 			session->media.update = FALSE;
+			session->media.autoaccept_reinvites = TRUE;
 			session->media.ready = FALSE;
 			session->media.on_hold = FALSE;
 			session->status = janus_sip_call_status_closing;
@@ -2920,6 +3007,7 @@ static void *janus_sip_handler(void *data) {
 			}
 			session->media.earlymedia = FALSE;
 			session->media.update = FALSE;
+			session->media.autoaccept_reinvites = TRUE;
 			session->media.ready = FALSE;
 			session->media.on_hold = FALSE;
 			session->status = janus_sip_call_status_closing;
@@ -3152,6 +3240,7 @@ static void *janus_sip_handler(void *data) {
 			const char *msg_content = json_string_value(json_object_get(root, "content"));
 			nua_message(session->stack->s_nh_i,
 				NUTAG_URL(session->callee),
+				SIPTAG_CONTENT_TYPE_STR("text/plain"),
 				SIPTAG_PAYLOAD_STR(msg_content),
 				TAG_END());
 			/* Notify the operation */
@@ -3212,6 +3301,7 @@ static void *janus_sip_handler(void *data) {
 		json_object_set_new(event, "sip", json_string("event"));
 		if(result != NULL)
 			json_object_set_new(event, "result", result);
+		json_object_set_new(event, "call_id", json_string(session->callid));
 		int ret = gateway->push_event(msg->handle, &janus_sip_plugin, msg->transaction, event, NULL);
 		JANUS_LOG(LOG_VERB, "  >> Pushing event: %d (%s)\n", ret, janus_get_api_error(ret));
 		json_decref(event);
@@ -3225,6 +3315,7 @@ error:
 			json_object_set_new(event, "sip", json_string("event"));
 			json_object_set_new(event, "error_code", json_integer(error_code));
 			json_object_set_new(event, "error", json_string(error_cause));
+			json_object_set_new(event, "call_id", json_string(session->callid));
 			int ret = gateway->push_event(msg->handle, &janus_sip_plugin, msg->transaction, event, NULL);
 			JANUS_LOG(LOG_VERB, "  >> Pushing event: %d (%s)\n", ret, janus_get_api_error(ret));
 			json_decref(event);
@@ -3246,7 +3337,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 	if(notify_events && gateway->events_is_enabled() && ssip) {
 		/* Print the incoming message */
 		size_t msg_size = 0;
-		msg_t* msg = nua_current_request(nua);
+		msg_t *msg = nua_current_request(nua);
 		if(msg) {
 			char *msg_str = msg_as_string(ssip->s_home, msg, NULL, 0, &msg_size);
 			json_t *info = json_object();
@@ -3290,6 +3381,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				json_object_set_new(calling, "event", json_string("proceeding"));
 				json_object_set_new(calling, "code", json_integer(status));
 				json_object_set_new(call, "result", calling);
+				json_object_set_new(call, "call_id", json_string(session->callid));
 				int ret = gateway->push_event(session->handle, &janus_sip_plugin, session->transaction, call, NULL);
 				JANUS_LOG(LOG_VERB, "  >> Pushing event: %d (%s)\n", ret, janus_get_api_error(ret));
 				json_decref(call);
@@ -3306,6 +3398,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 					(session->stack->s_nh_i == nh || session->stack->s_nh_i == NULL)) {
 				session->media.earlymedia = FALSE;
 				session->media.update = FALSE;
+				session->media.autoaccept_reinvites = TRUE;
 				session->media.ready = FALSE;
 				session->media.on_hold = FALSE;
 				session->status = janus_sip_call_status_idle;
@@ -3317,6 +3410,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				json_object_set_new(calling, "code", json_integer(status));
 				json_object_set_new(calling, "reason", json_string(phrase ? phrase : ""));
 				json_object_set_new(call, "result", calling);
+				json_object_set_new(call, "call_id", json_string(session->callid));
 				int ret = gateway->push_event(session->handle, &janus_sip_plugin, session->transaction, call, NULL);
 				JANUS_LOG(LOG_VERB, "  >> Pushing event: %d (%s)\n", ret, janus_get_api_error(ret));
 				json_decref(call);
@@ -3341,7 +3435,8 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				session->callid = NULL;
 				g_free(session->transaction);
 				session->transaction = NULL;
-				gateway->close_pc(session->handle);
+				if(g_atomic_int_get(&session->establishing) || g_atomic_int_get(&session->established))
+					gateway->close_pc(session->handle);
 			}
 			break;
 		case nua_i_terminated:
@@ -3375,40 +3470,52 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				nua_respond(nh, 500, sip_status_phrase(500), TAG_END());
 				break;
 			}
-			gboolean reinvite = FALSE;
-			if(session->stack->s_nh_i != NULL) {
+			gboolean reinvite = FALSE, busy = FALSE;
+			if(session->stack->s_nh_i == NULL) {
+				if(g_atomic_int_get(&session->establishing) || g_atomic_int_get(&session->established)) {
+					/* Still busy establishing another call (or maybe still cleaning up the previous call) */
+					busy = TRUE;
+				}
+			} else {
 				if(session->stack->s_nh_i == nh) {
 					/* re-INVITE, we'll check what changed later */
 					reinvite = TRUE;
 					JANUS_LOG(LOG_VERB, "Got a re-INVITE...\n");
 				} else if(session->status >= janus_sip_call_status_inviting) {
 					/* Busy with another call */
-					JANUS_LOG(LOG_VERB, "\tAlready in a call (busy, status=%s)\n", janus_sip_call_status_string(session->status));
-					nua_respond(nh, 486, sip_status_phrase(486), TAG_END());
-					/* Notify the web app about the missed invite */
-					json_t *missed = json_object();
-					json_object_set_new(missed, "sip", json_string("event"));
-					json_t *result = json_object();
-					json_object_set_new(result, "event", json_string("missed_call"));
-					char *caller_text = url_as_string(session->stack->s_home, sip->sip_from->a_url);
-					json_object_set_new(result, "caller", json_string(caller_text));
-					su_free(session->stack->s_home, caller_text);
-					if(sip->sip_from && sip->sip_from->a_display) {
-						json_object_set_new(result, "displayname", json_string(sip->sip_from->a_display));
-					}
-					json_object_set_new(missed, "result", result);
-					int ret = gateway->push_event(session->handle, &janus_sip_plugin, session->transaction, missed, NULL);
-					JANUS_LOG(LOG_VERB, "  >> Pushing event to peer: %d (%s)\n", ret, janus_get_api_error(ret));
-					json_decref(missed);
-					/* Also notify event handlers */
-					if(notify_events && gateway->events_is_enabled()) {
-						json_t *info = json_object();
-						json_object_set_new(info, "event", json_string("missed_call"));
-						json_object_set_new(info, "caller", json_string(caller_text));
-						gateway->notify_event(&janus_sip_plugin, session->handle, info);
-					}
-					break;
+					busy = TRUE;
 				}
+			}
+			if(busy) {
+				JANUS_LOG(LOG_VERB, "\tAlready in a call (busy, status=%s)\n", janus_sip_call_status_string(session->status));
+				nua_respond(nh, 486, sip_status_phrase(486), TAG_END());
+				/* Notify the web app about the missed invite */
+				json_t *missed = json_object();
+				json_object_set_new(missed, "sip", json_string("event"));
+				json_t *result = json_object();
+				json_object_set_new(result, "event", json_string("missed_call"));
+				char *caller_text = url_as_string(session->stack->s_home, sip->sip_from->a_url);
+				json_object_set_new(result, "caller", json_string(caller_text));
+				if(sip->sip_from && sip->sip_from->a_display) {
+					json_object_set_new(result, "displayname", json_string(sip->sip_from->a_display));
+				}
+				json_object_set_new(missed, "result", result);
+				json_object_set_new(missed, "call_id", json_string(session->callid));
+				int ret = gateway->push_event(session->handle, &janus_sip_plugin, session->transaction, missed, NULL);
+				JANUS_LOG(LOG_VERB, "  >> Pushing event to peer: %d (%s)\n", ret, janus_get_api_error(ret));
+				json_decref(missed);
+				/* Also notify event handlers */
+				if(notify_events && gateway->events_is_enabled()) {
+					json_t *info = json_object();
+					json_object_set_new(info, "event", json_string("missed_call"));
+					json_object_set_new(info, "caller", json_string(caller_text));
+					gateway->notify_event(&janus_sip_plugin, session->handle, info);
+				}
+				su_free(session->stack->s_home, caller_text);
+				break;
+			}
+			if(!reinvite) {
+				g_atomic_int_set(&session->establishing, 1);
 			}
 			/* Check if there's an SDP to process */
 			janus_sdp *sdp = NULL;
@@ -3419,6 +3526,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				sdp = janus_sdp_parse(sip->sip_payload->pl_data, sdperror, sizeof(sdperror));
 				if(!sdp) {
 					JANUS_LOG(LOG_ERR, "\tError parsing SDP! %s\n", sdperror);
+					g_atomic_int_set(&session->establishing, 0);
 					nua_respond(nh, 488, sip_status_phrase(488), TAG_END());
 					break;
 				}
@@ -3447,31 +3555,36 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				janus_sip_sdp_process(session, sdp, FALSE, reinvite, &changed);
 				/* Check if offer has neither audio nor video, fail with 488 */
 				if(!session->media.has_audio && !session->media.has_video) {
+					g_atomic_int_set(&session->establishing, 0);
 					nua_respond(nh, 488, sip_status_phrase(488), TAG_END());
 					janus_sdp_destroy(sdp);
 					break;
 				}
 				/* Also fail with 488 if there's no remote IP address that can be used for RTP */
 				if(!session->media.remote_ip) {
+					g_atomic_int_set(&session->establishing, 0);
 					nua_respond(nh, 488, sip_status_phrase(488), TAG_END());
 					janus_sdp_destroy(sdp);
 					break;
 				}
 			}
-			if(reinvite) {
+			if(reinvite && session->media.autoaccept_reinvites) {
 				/* No need to involve the browser: we reply ourselves */
 				nua_respond(nh, 200, sip_status_phrase(200), TAG_END());
 				janus_sdp_destroy(sdp);
 				break;
 			}
-			/* Notify the browser about the call */
+			/* If this is a re-INVITE, take note of that */
+			if(reinvite)
+				session->media.update = TRUE;
+			/* Notify the browser about the new incoming call or re-INVITE */
 			json_t *jsep = NULL;
 			if(sdp)
 				jsep = json_pack("{ssss}", "type", "offer", "sdp", sip->sip_payload->pl_data);
 			json_t *call = json_object();
 			json_object_set_new(call, "sip", json_string("event"));
 			json_t *calling = json_object();
-			json_object_set_new(calling, "event", json_string("incomingcall"));
+			json_object_set_new(calling, "event", json_string(reinvite ? "updatingcall" : "incomingcall"));
 			json_object_set_new(calling, "username", json_string(session->callee));
 			if(sip->sip_from && sip->sip_from->a_display) {
 				json_object_set_new(calling, "displayname", json_string(sip->sip_from->a_display));
@@ -3481,6 +3594,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				json_object_set_new(calling, "srtp", json_string(session->media.require_srtp ? "sdes_mandatory" : "sdes_optional"));
 			}
 			json_object_set_new(call, "result", calling);
+			json_object_set_new(call, "call_id", json_string(session->callid));
 			int ret = gateway->push_event(session->handle, &janus_sip_plugin, session->transaction, call, jsep);
 			JANUS_LOG(LOG_VERB, "  >> Pushing event to peer: %d (%s)\n", ret, janus_get_api_error(ret));
 			json_decref(call);
@@ -3490,7 +3604,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 			/* Also notify event handlers */
 			if(notify_events && gateway->events_is_enabled()) {
 				json_t *info = json_object();
-				json_object_set_new(info, "event", json_string("incomingcall"));
+				json_object_set_new(info, "event", json_string(reinvite ? "updatingcall" : "incomingcall"));
 				if(session->callid)
 					json_object_set_new(info, "call-id", json_string(session->callid));
 				json_object_set_new(info, "username", json_string(session->callee));
@@ -3498,9 +3612,11 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 					json_object_set_new(info, "displayname", json_string(sip->sip_from->a_display));
 				gateway->notify_event(&janus_sip_plugin, session->handle, info);
 			}
-			/* Send a Ringing back */
-			nua_respond(nh, 180, sip_status_phrase(180), TAG_END());
-			session->stack->s_nh_i = nh;
+			if(!reinvite) {
+				/* Send a Ringing back */
+				nua_respond(nh, 180, sip_status_phrase(180), TAG_END());
+				session->stack->s_nh_i = nh;
+			}
 			break;
 		}
 		case nua_i_info: {
@@ -3618,6 +3734,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 					json_t *result = json_object();
 					json_object_set_new(result, "event", json_string("ringing"));
 					json_object_set_new(ringing, "result", result);
+					json_object_set_new(ringing, "call_id", json_string(session->callid));
 					int ret = gateway->push_event(session->handle, &janus_sip_plugin, session->transaction, ringing, NULL);
 					JANUS_LOG(LOG_VERB, "  >> Pushing event to peer: %d (%s)\n", ret, janus_get_api_error(ret));
 					json_decref(ringing);
@@ -3698,9 +3815,15 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				break;
 			}
 			/* Send an ACK, if needed */
-			if(!in_progress && !session->media.autoack) {
-				char *route = sip->sip_record_route ? url_as_string(session->stack->s_home, sip->sip_record_route->r_url) : NULL;
-				JANUS_LOG(LOG_INFO, "Sending ACK (route=%s)\n", route ? route : "none");
+			if(!in_progress) {
+				char *route = NULL;
+				sip_record_route_t *srr = sip->sip_record_route;
+				if(srr != NULL) {
+					while(srr->r_next != NULL)
+						srr = srr->r_next;
+					route = srr ? url_as_string(session->stack->s_home, srr->r_url) : NULL;
+				}
+				JANUS_LOG(LOG_VERB, "Sending ACK (route=%s)\n", route ? route : "none");
 				nua_ack(nh,
 					TAG_IF(route, NTATAG_DEFAULT_PROXY(route)),
 					TAG_END());
@@ -3719,6 +3842,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				/* Hangup immediately */
 				session->media.earlymedia = FALSE;
 				session->media.update = FALSE;
+				session->media.autoaccept_reinvites = TRUE;
 				session->media.ready = FALSE;
 				session->media.on_hold = FALSE;
 				session->status = janus_sip_call_status_closing;
@@ -3734,6 +3858,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				/* Hangup immediately */
 				session->media.earlymedia = FALSE;
 				session->media.update = FALSE;
+				session->media.autoaccept_reinvites = TRUE;
 				session->media.ready = FALSE;
 				session->media.on_hold = FALSE;
 				session->status = janus_sip_call_status_closing;
@@ -3761,8 +3886,10 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 				char tname[16];
 				g_snprintf(tname, sizeof(tname), "siprtp %s", session->account.username);
 				janus_refcount_increase(&session->ref);
-				g_thread_try_new(tname, janus_sip_relay_thread, session, &error);
+				session->relayer_thread = g_thread_try_new(tname, janus_sip_relay_thread, session, &error);
 				if(error != NULL) {
+					session->relayer_thread = NULL;
+					session->media.ready = FALSE;
 					janus_refcount_decrease(&session->ref);
 					JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the RTP/RTCP thread...\n", error->code, error->message ? error->message : "??");
 				}
@@ -3785,6 +3912,7 @@ void janus_sip_sofia_callback(nua_event_t event, int status, char const *phrase,
 			json_object_set_new(calling, "event", json_string(in_progress ? "progress" : "accepted"));
 			json_object_set_new(calling, "username", json_string(session->callee));
 			json_object_set_new(call, "result", calling);
+			json_object_set_new(call, "call_id", json_string(session->callid));
 			int ret = gateway->push_event(session->handle, &janus_sip_plugin, session->transaction, call, jsep);
 			JANUS_LOG(LOG_VERB, "  >> Pushing event to peer: %d (%s)\n", ret, janus_get_api_error(ret));
 			json_decref(call);
@@ -4026,8 +4154,8 @@ void janus_sip_sdp_process(janus_sip_session *session, janus_sdp *sdp, gboolean 
 						gint32 tag = 0;
 						char profile[101], crypto[101];
 						/* FIXME inline can be more complex than that, and we're currently only offering SHA1_80 */
-						int res = sscanf(a->value, "%"SCNi32" %100s inline:%100s",
-							&tag, profile, crypto);
+						int res = a->value ? (sscanf(a->value, "%"SCNi32" %100s inline:%100s",
+							&tag, profile, crypto)) : 0;
 						if(res != 3) {
 							JANUS_LOG(LOG_WARN, "Failed to parse crypto line, ignoring... %s\n", a->value);
 						} else {
@@ -4073,6 +4201,10 @@ char *janus_sip_sdp_manipulate(janus_sip_session *session, janus_sdp *sdp, gbool
 		return NULL;
 	/* Start replacing stuff */
 	JANUS_LOG(LOG_VERB, "Setting protocol to %s\n", session->media.require_srtp ? "RTP/SAVP" : "RTP/AVP");
+	if(sdp->c_addr) {
+		g_free(sdp->c_addr);
+		sdp->c_addr = g_strdup(sdp_ip ? sdp_ip : local_ip);
+	}
 	GList *temp = sdp->m_lines;
 	while(temp) {
 		janus_sdp_mline *m = (janus_sdp_mline *)temp->data;
@@ -4102,7 +4234,7 @@ char *janus_sip_sdp_manipulate(janus_sip_session *session, janus_sdp *sdp, gbool
 			}
 		}
 		g_free(m->c_addr);
-		m->c_addr = g_strdup(local_ip);
+		m->c_addr = g_strdup(sdp_ip ? sdp_ip : local_ip);
 		if(answer && (m->type == JANUS_SDP_AUDIO || m->type == JANUS_SDP_VIDEO)) {
 			/* Check which codec was negotiated eventually */
 			int pt = -1;
@@ -4507,8 +4639,8 @@ static void *janus_sip_relay_thread(void *data) {
 					/* Got something audio (RTP) */
 					addrlen = sizeof(remote);
 					bytes = recvfrom(session->media.audio_rtp_fd, buffer, 1500, 0, (struct sockaddr*)&remote, &addrlen);
-					if(bytes < 0) {
-						/* Failed to read? */
+					if(bytes < 0 || !janus_is_rtp(buffer, bytes)) {
+						/* Failed to read or not an RTP packet? */
 						continue;
 					}
 					pollerrs = 0;
@@ -4549,8 +4681,8 @@ static void *janus_sip_relay_thread(void *data) {
 					/* Got something audio (RTCP) */
 					addrlen = sizeof(remote);
 					bytes = recvfrom(session->media.audio_rtcp_fd, buffer, 1500, 0, (struct sockaddr*)&remote, &addrlen);
-					if(bytes < 0) {
-						/* Failed to read? */
+					if(bytes < 0 || !janus_is_rtcp(buffer, bytes)) {
+						/* Failed to read or not an RTCP packet? */
 						continue;
 					}
 					pollerrs = 0;
@@ -4572,8 +4704,8 @@ static void *janus_sip_relay_thread(void *data) {
 					/* Got something video (RTP) */
 					addrlen = sizeof(remote);
 					bytes = recvfrom(session->media.video_rtp_fd, buffer, 1500, 0, (struct sockaddr*)&remote, &addrlen);
-					if(bytes < 0) {
-						/* Failed to read? */
+					if(bytes < 0 || !janus_is_rtp(buffer, bytes)) {
+						/* Failed to read or not an RTP packet? */
 						continue;
 					}
 					pollerrs = 0;
@@ -4614,8 +4746,8 @@ static void *janus_sip_relay_thread(void *data) {
 					/* Got something video (RTCP) */
 					addrlen = sizeof(remote);
 					bytes = recvfrom(session->media.video_rtcp_fd, buffer, 1500, 0, (struct sockaddr*)&remote, &addrlen);
-					if(bytes < 0) {
-						/* Failed to read? */
+					if(bytes < 0 || !janus_is_rtcp(buffer, bytes)) {
+						/* Failed to read or not an RTCP packet? */
 						continue;
 					}
 					pollerrs = 0;
@@ -4641,6 +4773,7 @@ static void *janus_sip_relay_thread(void *data) {
 	janus_sip_media_cleanup(session);
 	/* Done */
 	JANUS_LOG(LOG_VERB, "Leaving SIP relay thread\n");
+	session->relayer_thread = NULL;
 	janus_refcount_decrease(&session->ref);
 	g_thread_unref(g_thread_self());
 	return NULL;

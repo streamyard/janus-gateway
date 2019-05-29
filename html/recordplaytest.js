@@ -63,6 +63,7 @@ var selectedRecording = null;
 var selectedRecordingInfo = null;
 
 var doSimulcast = (getQueryStringValue("simulcast") === "yes" || getQueryStringValue("simulcast") === "true");
+var doSimulcast2 = (getQueryStringValue("simulcast2") === "yes" || getQueryStringValue("simulcast2") === "true");
 
 
 $(document).ready(function() {
@@ -107,7 +108,7 @@ $(document).ready(function() {
 									Janus.debug("Consent dialog should be " + (on ? "on" : "off") + " now");
 									if(on) {
 										// Darken screen and show hint
-										$.blockUI({ 
+										$.blockUI({
 											message: '<div><img src="up_arrow.png"/></div>',
 											css: {
 												border: 'none',
@@ -234,7 +235,7 @@ $(document).ready(function() {
 									$('#stop').unbind('click').click(stop);
 									$('#video').removeClass('hide').show();
 									if($('#thevideo').length === 0)
-										$('#videobox').append('<video class="rounded centered" id="thevideo" width=320 height=240 autoplay muted="muted"/>');
+										$('#videobox').append('<video class="rounded centered" id="thevideo" width=320 height=240 autoplay playsinline muted="muted"/>');
 									Janus.attachMediaStream($('#thevideo').get(0), stream);
 									$("#thevideo").get(0).muted = "muted";
 									if(recordplay.webrtcStuff.pc.iceConnectionState !== "completed" &&
@@ -273,7 +274,7 @@ $(document).ready(function() {
 										$('#videotitle').html(selectedRecordingInfo);
 										$('#stop').unbind('click').click(stop);
 										$('#video').removeClass('hide').show();
-										$('#videobox').append('<video class="rounded centered hide" id="thevideo" width=320 height=240 autoplay/>');
+										$('#videobox').append('<video class="rounded centered hide" id="thevideo" width=320 height=240 autoplay playsinline/>');
 										// No remote video yet
 										$('#videobox').append('<video class="rounded centered" id="waitingvideo" width=320 height=240 />');
 										if(spinner == null) {
@@ -409,7 +410,7 @@ function startRecording() {
 		$('#recset').attr('disabled', true);
 		$('#recslist').attr('disabled', true);
 
-		// bitrate and keyframe interval can be set at any time: 
+		// bitrate and keyframe interval can be set at any time:
 		// before, after, during recording
 		recordplay.send({
 			'message': {
@@ -418,7 +419,7 @@ function startRecording() {
 				'video-keyframe-interval': 15000 // 15 seconds
 			}
 		});
-		
+
 		recordplay.createOffer(
 			{
 				// By default, it's sendrecv for audio and video... no datachannels

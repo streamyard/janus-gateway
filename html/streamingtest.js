@@ -151,7 +151,8 @@ $(document).ready(function() {
 										streaming.createAnswer(
 											{
 												jsep: jsep,
-												media: { audioSend: false, videoSend: false },	// We want recvonly audio/video
+												// We want recvonly audio/video and, if negotiated, datachannels
+												media: { audioSend: false, videoSend: false, data: true },
 												success: function(jsep) {
 													Janus.debug("Got SDP!");
 													Janus.debug(jsep);
@@ -172,7 +173,7 @@ $(document).ready(function() {
 									var addButtons = false;
 									if($('#remotevideo').length === 0) {
 										addButtons = true;
-										$('#stream').append('<video class="rounded centered hide" id="remotevideo" width=320 height=240 autoplay/>');
+										$('#stream').append('<video class="rounded centered hide" id="remotevideo" width=320 height=240 autoplay playsinline/>');
 										// Show the stream and hide the spinner when we get a playing event
 										$("#remotevideo").bind("playing", function () {
 											$('#waitingvideo').remove();
@@ -233,10 +234,25 @@ $(document).ready(function() {
 										}, 1000);
 									}
 								},
+								ondataopen: function(data) {
+									Janus.log("The DataChannel is available!");
+									$('#waitingvideo').remove();
+									$('#stream').append(
+										'<input class="form-control" type="text" id="datarecv" disabled></input>'
+									);
+									if(spinner !== null && spinner !== undefined)
+										spinner.stop();
+									spinner = null;
+								},
+								ondata: function(data) {
+									Janus.debug("We got data from the DataChannel! " + data);
+									$('#datarecv').val(data);
+								},
 								oncleanup: function() {
 									Janus.log(" ::: Got a cleanup notification :::");
 									$('#waitingvideo').remove();
 									$('#remotevideo').remove();
+									$('#datarecv').remove();
 									$('.no-video-container').remove();
 									$('#bitrate').attr('disabled', true);
 									$('#bitrateset').html('Bandwidth<span class="caret"></span>');
@@ -293,7 +309,7 @@ function updateStreamsList() {
 				return false;
 
 			});
-			$('#watch').removeAttr('disabled').click(startStream);
+			$('#watch').removeAttr('disabled').unbind('click').click(startStream);
 		}
 	}});
 }
@@ -326,7 +342,7 @@ function stopStream() {
 	streaming.hangup();
 	$('#streamset').removeAttr('disabled');
 	$('#streamslist').removeAttr('disabled');
-	$('#watch').html("Watch or Listen").removeAttr('disabled').click(startStream);
+	$('#watch').html("Watch or Listen").removeAttr('disabled').unbind('click').click(startStream);
 	$('#status').empty().hide();
 	$('#bitrate').attr('disabled', true);
 	$('#bitrateset').html('Bandwidth<span class="caret"></span>');
