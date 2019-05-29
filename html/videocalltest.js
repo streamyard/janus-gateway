@@ -59,9 +59,10 @@ var audioenabled = false;
 var videoenabled = false;
 
 var myusername = null;
-var yourusername = null;	
+var yourusername = null;
 
 var doSimulcast = (getQueryStringValue("simulcast") === "yes" || getQueryStringValue("simulcast") === "true");
+var doSimulcast2 = (getQueryStringValue("simulcast2") === "yes" || getQueryStringValue("simulcast2") === "true");
 var simulcastStarted = false;
 
 $(document).ready(function() {
@@ -109,7 +110,7 @@ $(document).ready(function() {
 									Janus.debug("Consent dialog should be " + (on ? "on" : "off") + " now");
 									if(on) {
 										// Darken screen and show hint
-										$.blockUI({ 
+										$.blockUI({
 											message: '<div><img src="up_arrow.png"/></div>',
 											css: {
 												border: 'none',
@@ -273,7 +274,7 @@ $(document).ready(function() {
 												if((substream !== null && substream !== undefined) || (temporal !== null && temporal !== undefined)) {
 													if(!simulcastStarted) {
 														simulcastStarted = true;
-														addSimulcastButtons(result["videocodec"] === "vp8");
+														addSimulcastButtons(result["videocodec"] === "vp8" || result["videocodec"] === "h264");
 													}
 													// We just received notice that there's been a switch, update the buttons
 													updateSimulcastButtons(substream, temporal);
@@ -304,7 +305,7 @@ $(document).ready(function() {
 										$('#bitrate').attr('disabled', true);
 										$('#curbitrate').hide();
 										$('#curres').hide();
-										if(bitrateTimer !== null && bitrateTimer !== null) 
+										if(bitrateTimer !== null && bitrateTimer !== null)
 											clearInterval(bitrateTimer);
 										bitrateTimer = null;
 									}
@@ -314,7 +315,7 @@ $(document).ready(function() {
 									Janus.debug(stream);
 									$('#videos').removeClass('hide').show();
 									if($('#myvideo').length === 0)
-										$('#videoleft').append('<video class="rounded centered" id="myvideo" width=320 height=240 autoplay muted="muted"/>');
+										$('#videoleft').append('<video class="rounded centered" id="myvideo" width=320 height=240 autoplay playsinline muted="muted"/>');
 									Janus.attachMediaStream($('#myvideo').get(0), stream);
 									$("#myvideo").get(0).muted = "muted";
 									if(videocall.webrtcStuff.pc.iceConnectionState !== "completed" &&
@@ -358,7 +359,7 @@ $(document).ready(function() {
 									var addButtons = false;
 									if($('#remotevideo').length === 0) {
 										addButtons = true;
-										$('#videoright').append('<video class="rounded centered hide" id="remotevideo" width=320 height=240 autoplay/>');
+										$('#videoright').append('<video class="rounded centered hide" id="remotevideo" width=320 height=240 autoplay playsinline/>');
 										// Show the video, hide the spinner and show the resolution when we get a playing event
 										$("#remotevideo").bind("playing", function () {
 											$('#waitingvideo').remove();
@@ -468,7 +469,7 @@ $(document).ready(function() {
 									$('#bitrate').attr('disabled', true);
 									$('#curbitrate').hide();
 									$('#curres').hide();
-									if(bitrateTimer !== null && bitrateTimer !== null) 
+									if(bitrateTimer !== null && bitrateTimer !== null)
 										clearInterval(bitrateTimer);
 									bitrateTimer = null;
 									$('#waitingvideo').remove();

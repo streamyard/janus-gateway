@@ -59,6 +59,9 @@ var audioenabled = false;
 var videoenabled = false;
 
 var doSimulcast = (getQueryStringValue("simulcast") === "yes" || getQueryStringValue("simulcast") === "true");
+var doSimulcast2 = (getQueryStringValue("simulcast2") === "yes" || getQueryStringValue("simulcast2") === "true");
+var acodec = (getQueryStringValue("acodec") !== "" ? getQueryStringValue("acodec") : null);
+var vcodec = (getQueryStringValue("vcodec") !== "" ? getQueryStringValue("vcodec") : null);
 var simulcastStarted = false;
 
 $(document).ready(function() {
@@ -97,6 +100,12 @@ $(document).ready(function() {
 									Janus.log("Plugin attached! (" + echotest.getPlugin() + ", id=" + echotest.getId() + ")");
 									// Negotiate WebRTC
 									var body = { "audio": true, "video": true };
+									// We can try and force a specific codec, by telling the plugin what we'd prefer
+									// For simplicity, you can set it via a query string (e.g., ?vcodec=vp9)
+									if(acodec)
+										body["audiocodec"] = acodec;
+									if(vcodec)
+										body["videocodec"] = vcodec;
 									Janus.debug("Sending message (" + JSON.stringify(body) + ")");
 									echotest.send({"message": body});
 									Janus.debug("Trying a createOffer too (audio/video sendrecv)");
@@ -108,6 +117,7 @@ $(document).ready(function() {
 											// pass a ?simulcast=true when opening this demo page: it will turn
 											// the following 'simulcast' property to pass to janus.js to true
 											simulcast: doSimulcast,
+											simulcast2: doSimulcast2,
 											success: function(jsep) {
 												Janus.debug("Got SDP!");
 												Janus.debug(jsep);
@@ -135,7 +145,7 @@ $(document).ready(function() {
 									Janus.debug("Consent dialog should be " + (on ? "on" : "off") + " now");
 									if(on) {
 										// Darken screen and show hint
-										$.blockUI({ 
+										$.blockUI({
 											message: '<div><img src="up_arrow.png"/></div>',
 											css: {
 												border: 'none',
@@ -204,7 +214,7 @@ $(document).ready(function() {
 									if((substream !== null && substream !== undefined) || (temporal !== null && temporal !== undefined)) {
 										if(!simulcastStarted) {
 											simulcastStarted = true;
-											addSimulcastButtons(msg["videocodec"] === "vp8");
+											addSimulcastButtons(msg["videocodec"] === "vp8" || msg["videocodec"] === "h264");
 										}
 										// We just received notice that there's been a switch, update the buttons
 										updateSimulcastButtons(substream, temporal);
@@ -215,7 +225,7 @@ $(document).ready(function() {
 									Janus.debug(stream);
 									if($('#myvideo').length === 0) {
 										$('#videos').removeClass('hide').show();
-										$('#videoleft').append('<video class="rounded centered" id="myvideo" width=320 height=240 autoplay muted="muted"/>');
+										$('#videoleft').append('<video class="rounded centered" id="myvideo" width=320 height=240 autoplay playsinline muted="muted"/>');
 									}
 									Janus.attachMediaStream($('#myvideo').get(0), stream);
 									$("#myvideo").get(0).muted = "muted";
@@ -261,7 +271,7 @@ $(document).ready(function() {
 									if($('#peervideo').length === 0) {
 										addButtons = true;
 										$('#videos').removeClass('hide').show();
-										$('#videoright').append('<video class="rounded centered hide" id="peervideo" width=320 height=240 autoplay/>');
+										$('#videoright').append('<video class="rounded centered hide" id="peervideo" width=320 height=240 autoplay playsinline/>');
 										// Show the video, hide the spinner and show the resolution when we get a playing event
 										$("#peervideo").bind("playing", function () {
 											$('#waitingvideo').remove();

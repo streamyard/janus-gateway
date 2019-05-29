@@ -63,6 +63,7 @@ var audioenabled = false;
 var videoenabled = false;
 
 var doSimulcast = (getQueryStringValue("simulcast") === "yes" || getQueryStringValue("simulcast") === "true");
+var doSimulcast2 = (getQueryStringValue("simulcast2") === "yes" || getQueryStringValue("simulcast2") === "true");
 var simulcastStarted = false;
 
 // Helper method to prepare a UI selection of the available devices
@@ -86,6 +87,7 @@ function initDevices(devices) {
 		} else if(device.kind === 'audiooutput') {
 			// Apparently only available from Chrome 49 on?
 			// https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/setSinkId
+			// Definitely missing in Safari at the moment: https://bugs.webkit.org/show_bug.cgi?id=179415
 			$('#output-devices').removeClass('hide');
 			$('#audiooutput').append('<li><a href="#" id="' + device.deviceId + '">' + label + '</a></li>');
 			$('#audiooutput a').unbind('click')
@@ -96,6 +98,11 @@ function initDevices(devices) {
 					if($('#peervideo').length === 0) {
 						Janus.error("No remote video element available");
 						bootbox.alert("No remote video element available");
+						return false;
+					}
+					if(!$('#peervideo').get(0).setSinkId) {
+						Janus.error("SetSinkId not supported");
+						bootbox.warn("SetSinkId not supported");
 						return false;
 					}
 					$('#peervideo').get(0).setSinkId(deviceId)
@@ -223,7 +230,7 @@ $(document).ready(function() {
 									Janus.debug("Consent dialog should be " + (on ? "on" : "off") + " now");
 									if(on) {
 										// Darken screen and show hint
-										$.blockUI({ 
+										$.blockUI({
 											message: '<div><img src="up_arrow.png"/></div>',
 											css: {
 												border: 'none',
@@ -296,7 +303,7 @@ $(document).ready(function() {
 									Janus.debug(stream);
 									if($('#myvideo').length === 0) {
 										$('#videos').removeClass('hide').show();
-										$('#videoleft').append('<video class="rounded centered" id="myvideo" width=320 height=240 autoplay muted="muted"/>');
+										$('#videoleft').append('<video class="rounded centered" id="myvideo" width=320 height=240 autoplay playsinline muted="muted"/>');
 									}
 									Janus.attachMediaStream($('#myvideo').get(0), stream);
 									$("#myvideo").get(0).muted = "muted";
@@ -347,7 +354,7 @@ $(document).ready(function() {
 									if($('#peervideo').length === 0) {
 										addButtons = true;
 										$('#videos').removeClass('hide').show();
-										$('#videoright').append('<video class="rounded centered hide" id="peervideo" width=320 height=240 autoplay/>');
+										$('#videoright').append('<video class="rounded centered hide" id="peervideo" width=320 height=240 autoplay playsinline/>');
 										// Show the video, hide the spinner and show the resolution when we get a playing event
 										$("#peervideo").bind("playing", function () {
 											$('#waitingvideo').remove();
