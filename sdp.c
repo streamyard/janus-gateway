@@ -364,6 +364,13 @@ int janus_sdp_process(void *ice_handle, janus_sdp *remote_sdp, gboolean update) 
 				rfingerprint = NULL;
 				return -2;
 			}
+			/* If we received the ICE credentials for the first time, enforce them */
+			if(ruser && !stream->ruser && rpass && !stream->rpass) {
+				JANUS_LOG(LOG_VERB, "[%"SCNu64"] Setting remote credentials...\n", handle->handle_id);
+				if(!nice_agent_set_remote_credentials(handle->agent, handle->stream_id, ruser, rpass)) {
+					JANUS_LOG(LOG_ERR, "[%"SCNu64"] Failed to set remote credentials!\n", handle->handle_id);
+				}
+			} else
 			/* If this is a renegotiation, check if this is an ICE restart */
 			if((ruser && stream->ruser && strcmp(ruser, stream->ruser)) ||
 					(rpass && stream->rpass && strcmp(rpass, stream->rpass))) {
@@ -605,7 +612,7 @@ int janus_sdp_parse_candidate(void *ice_stream, const char *candidate, int trick
 	if(handle == NULL)
 		return -2;
 	janus_ice_component *component = NULL;
-	if(strstr(candidate, "end-of-candidates")) {
+	if(strlen(candidate) == 0 || strstr(candidate, "end-of-candidates")) {
 		/* FIXME Should we do something with this? */
 		JANUS_LOG(LOG_VERB, "[%"SCNu64"] end-of-candidates received\n", handle->handle_id);
 		return 0;
@@ -1034,6 +1041,7 @@ int janus_sdp_anonymize(janus_sdp *anon) {
 					|| !strcasecmp(a->name, "rtcp-mux")
 					|| !strcasecmp(a->name, "rtcp-rsize")
 					|| !strcasecmp(a->name, "candidate")
+					|| !strcasecmp(a->name, "end-of-candidates")
 					|| !strcasecmp(a->name, "ssrc")
 					|| !strcasecmp(a->name, "ssrc-group")
 					|| !strcasecmp(a->name, "sctpmap")
@@ -1351,13 +1359,15 @@ char *janus_sdp_merge(void *ice_handle, janus_sdp *anon, gboolean offer) {
 			m->attributes = g_list_insert_before(m->attributes, first, a);
 		}
 		/* Add last attributes, rtcp and ssrc (msid) */
-		if(m->type == JANUS_SDP_VIDEO && janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_RFC4588_RTX)) {
+		if(m->type == JANUS_SDP_VIDEO && janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_RFC4588_RTX) &&
+				(m->direction == JANUS_SDP_DEFAULT || m->direction == JANUS_SDP_SENDRECV || m->direction == JANUS_SDP_SENDONLY)) {
 			/* Add FID group to negotiate the RFC4588 stuff */
 			a = janus_sdp_attribute_create("ssrc-group", "FID %"SCNu32" %"SCNu32, stream->video_ssrc, stream->video_ssrc_rtx);
 			m->attributes = g_list_append(m->attributes, a);
 		}
-		if(m->type == JANUS_SDP_AUDIO &&
-				(m->direction == JANUS_SDP_DEFAULT || m->direction == JANUS_SDP_SENDRECV || m->direction == JANUS_SDP_SENDONLY)) {
+		if(m->type == JANUS_SDP_AUDIO) {
+			a = janus_sdp_attribute_create("msid", "janus janusa0");
+			m->attributes = g_list_append(m->attributes, a);
 			a = janus_sdp_attribute_create("ssrc", "%"SCNu32" cname:janus", stream->audio_ssrc);
 			m->attributes = g_list_append(m->attributes, a);
 			a = janus_sdp_attribute_create("ssrc", "%"SCNu32" msid:janus janusa0", stream->audio_ssrc);
@@ -1366,8 +1376,9 @@ char *janus_sdp_merge(void *ice_handle, janus_sdp *anon, gboolean offer) {
 			m->attributes = g_list_append(m->attributes, a);
 			a = janus_sdp_attribute_create("ssrc", "%"SCNu32" label:janusa0", stream->audio_ssrc);
 			m->attributes = g_list_append(m->attributes, a);
-		} else if(m->type == JANUS_SDP_VIDEO &&
-				(m->direction == JANUS_SDP_DEFAULT || m->direction == JANUS_SDP_SENDRECV || m->direction == JANUS_SDP_SENDONLY)) {
+		} else if(m->type == JANUS_SDP_VIDEO) {
+			a = janus_sdp_attribute_create("msid", "janus janusv0");
+			m->attributes = g_list_append(m->attributes, a);
 			a = janus_sdp_attribute_create("ssrc", "%"SCNu32" cname:janus", stream->video_ssrc);
 			m->attributes = g_list_append(m->attributes, a);
 			a = janus_sdp_attribute_create("ssrc", "%"SCNu32" msid:janus janusv0", stream->video_ssrc);
