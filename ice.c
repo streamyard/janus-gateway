@@ -3575,7 +3575,7 @@ static gboolean janus_ice_outgoing_rtcp_handle(gpointer user_data) {
 		janus_rtcp_sdes_cname((char *)sdes, sdeslen, "janus", 5);
 		sdes->chunk.ssrc = htonl(stream->audio_ssrc);
 		/* Enqueue it, we'll send it later */
-		// janus_ice_relay_rtcp_internal(handle, 0, rtcpbuf, srlen+sdeslen, FALSE);
+		janus_ice_relay_rtcp_internal(handle, 0, rtcpbuf, srlen+sdeslen, FALSE);
 		/* Check if we detected too many losses, and send a slowlink event in case */
 		guint lost = janus_rtcp_context_get_lost_all(rtcp_ctx, TRUE);
 		janus_slow_link_update(stream->component, handle, FALSE, TRUE, lost);
@@ -3634,7 +3634,7 @@ static gboolean janus_ice_outgoing_rtcp_handle(gpointer user_data) {
 		janus_rtcp_sdes_cname((char *)sdes, sdeslen, "janus", 5);
 		sdes->chunk.ssrc = htonl(stream->video_ssrc);
 		/* Enqueue it, we'll send it later */
-		// janus_ice_relay_rtcp_internal(handle, 1, rtcpbuf, srlen+sdeslen, FALSE);
+		janus_ice_relay_rtcp_internal(handle, 1, rtcpbuf, srlen+sdeslen, FALSE);
 		/* Check if we detected too many losses, and send a slowlink event in case */
 		guint lost = janus_rtcp_context_get_lost_all(rtcp_ctx, TRUE);
 		janus_slow_link_update(stream->component, handle, TRUE, TRUE, lost);
